@@ -129,6 +129,16 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
         case "startSessionWithDevice":
             result(startSessionWithDevice(deviceIndex: call.arguments as! Int))
             break
+        case "getCurrentSession":
+            if let current = sessionManager.currentCastSession ?? sessionManager.currentSession,
+               current.connectionState == .connected {
+                CastLogger.shared.log("getCurrentSession called: returning \(current.device.friendlyName ?? current.device.deviceID), state: \(current.connectionState.rawValue)")
+                result(current.toDict())
+            } else {
+                CastLogger.shared.log("getCurrentSession called: no connected session (current: \(String(describing: (sessionManager.currentCastSession ?? sessionManager.currentSession)?.connectionState.rawValue)))")
+                result(nil)
+            }
+            break
         case "endSession":
             endSession(result)
             break
@@ -140,6 +150,9 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
             break
         case "setDeviceVolume":
             setDeviceVolume(call.arguments as! NSNumber)
+            break
+        case "setDeviceMuted":
+            setDeviceMuted(call.arguments as! Bool)
             break
             
         default:
@@ -159,25 +172,41 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///
     /// - Parameter deviceIndex: The index of the device in the discovery list
     /// - Returns: `true` if session initiation was successful, `false` otherwise
-    /// - Note: This method only initiates the session; actual connection status
-    ///         is reported through session manager listener callbacks
-    ///
-    /// The index is bounds-checked against `GCKDiscoveryManager.deviceCount`
-    /// before accessing the underlying device. `GCKDiscoveryManager.device(at:)`
-    /// is backed by an `NSArray` and throws `NSRangeException` for out-of-bounds
-    /// access, which crashes the process (Swift cannot catch Obj-C exceptions).
-    /// The index comes from the Dart side, which holds a snapshot of the device
-    /// list received via `onDevicesChanged`; between that snapshot and this
-    /// call a device may disappear from the live discovery list (flaky
-    /// receivers, network hiccups), making the snapshot index stale.
     private func startSessionWithDevice(deviceIndex : Int ) -> Bool {
         let deviceCount = discoveryManager.deviceCount
         guard deviceIndex >= 0, UInt(deviceIndex) < deviceCount else {
-            print("[GoogleCast] startSessionWithDevice: index \(deviceIndex) is out of bounds (deviceCount=\(deviceCount)); the Dart-side snapshot is stale")
+            CastLogger.shared.log("startSessionWithDevice: index \(deviceIndex) is out of bounds (deviceCount=\(deviceCount)); snapshot is stale")
             return false
         }
-        let device = discoveryManager.device(at: UInt(deviceIndex))
-        return sessionManager.startSession(with: device)
+        let targetDevice = discoveryManager.device(at: UInt(deviceIndex))
+        
+        // If there is already an active session connected to THIS device,
+        // do not restart the session! Simply re-emit the connected state to Flutter
+        // and return true immediately so Flutter can proceed with media playback.
+        if let currentSession = sessionManager.currentCastSession ?? sessionManager.currentSession {
+            let currentDev = currentSession.device
+            let isSameDevice = currentDev.deviceID == targetDevice.deviceID ||
+                               (currentDev.friendlyName != nil && currentDev.friendlyName == targetDevice.friendlyName)
+            
+            if isSameDevice && currentSession.connectionState == .connected {
+                CastLogger.shared.log("startSessionWithDevice: already connected to \(targetDevice.friendlyName ?? targetDevice.deviceID), notifying Flutter")
+                var dict = currentSession.toDict()
+                dict["connectionState"] = GCKConnectionState.connected.rawValue
+                channel?.invokeMethod("onCurrentSessionChanged", arguments: dict)
+                RemoteMediaClienteMethodChannel.instance.startListen()
+                return true
+            } else if isSameDevice && currentSession.connectionState == .connecting {
+                CastLogger.shared.log("startSessionWithDevice: already connecting to \(targetDevice.friendlyName ?? targetDevice.deviceID)")
+                return true
+            } else {
+                CastLogger.shared.log("startSessionWithDevice: ending stale session (state: \(currentSession.connectionState.rawValue)) before connecting to \(targetDevice.friendlyName ?? "")")
+                sessionManager.endSessionAndStopCasting(true)
+            }
+        }
+        
+        _lastEmittedConnectionState = nil
+        CastLogger.shared.log("startSessionWithDevice: calling sessionManager.startSession for \(targetDevice.friendlyName ?? targetDevice.deviceID)")
+        return sessionManager.startSession(with: targetDevice)
     }
     
     /// Ends the current Cast session
@@ -219,6 +248,10 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
         sessionManager.currentCastSession?.setDeviceVolume(Float(truncating: volume))
     }
     
+    func setDeviceMuted(_ muted: Bool){
+        sessionManager.currentCastSession?.setDeviceMuted(muted)
+    }
+    
     // MARK: - Google Cast Session Manager Listener
     
     /// Called when a session is about to start
@@ -242,6 +275,14 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - sessionManager: The session manager instance
     ///   - session: The session that started
     public func sessionManager(_ sessionManager: GCKSessionManager, didStart session: GCKSession) {
+        CastLogger.shared.log("didStart (GCKSession): \(session.device.friendlyName ?? session.device.deviceID)")
+        onSessionChanged(session)
+        RemoteMediaClienteMethodChannel.instance.startListen()
+    }
+
+    /// Called when a Cast session has been successfully started
+    public func sessionManager(_ sessionManager: GCKSessionManager, didStart session: GCKCastSession) {
+        CastLogger.shared.log("didStart (GCKCastSession): \(session.device.friendlyName ?? session.device.deviceID)")
         onSessionChanged(session)
         RemoteMediaClienteMethodChannel.instance.startListen()
     }
@@ -255,6 +296,7 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - sessionManager: The session manager instance
     ///   - session: The Cast session that will start
     public func sessionManager(_ sessionManager: GCKSessionManager, willStart session: GCKCastSession) {
+        CastLogger.shared.log("willStart (GCKCastSession): \(session.device.friendlyName ?? session.device.deviceID)")
         onSessionChanged(session)
     }
     
@@ -268,7 +310,8 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - session: The Cast session that failed to start
     ///   - error: The error that caused the failure
     public func sessionManager(_ sessionManager: GCKSessionManager, didFailToStart session: GCKCastSession, withError error: Error) {
-        onSessionChanged(session)
+        CastLogger.shared.log("didFailToStart (GCKCastSession): \(session.device.friendlyName ?? session.device.deviceID), error: \(error.localizedDescription)")
+        onSessionChanged(nil)
     }
     
     /// Called when a session is about to end
@@ -295,7 +338,8 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - session: The session that ended
     ///   - error: Optional error if the session ended unexpectedly
     public func sessionManager(_ sessionManager: GCKSessionManager, didEnd session: GCKSession, withError error: Error?) {
-        onSessionChanged(session)
+        CastLogger.shared.log("didEnd (GCKSession): \(session.device.friendlyName ?? session.device.deviceID)")
+        onSessionChanged(nil)
         RemoteMediaClienteMethodChannel.instance.onSessionEnd()
     }
     
@@ -322,6 +366,7 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - session: The Cast session that ended
     ///   - error: Optional error if the session ended unexpectedly
     public func sessionManager(_ sessionManager: GCKSessionManager, didEnd session: GCKCastSession, withError error: Error?) {
+        CastLogger.shared.log("didEnd (GCKCastSession): \(session.device.friendlyName ?? session.device.deviceID)")
         onSessionChanged(nil)
         RemoteMediaClienteMethodChannel.instance.onSessionEnd()
     }
@@ -336,7 +381,8 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - session: The session that failed to start
     ///   - error: The error that caused the failure
     public func sessionManager(_ sessionManager: GCKSessionManager, didFailToStart session: GCKSession, withError error: Error) {
-        onSessionChanged(session)
+        CastLogger.shared.log("didFailToStart (GCKSession): \(session.device.friendlyName ?? session.device.deviceID), error: \(error.localizedDescription)")
+        onSessionChanged(nil)
     }
     
     /// Called when a session is suspended
@@ -400,7 +446,10 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
     ///   - sessionManager: The session manager instance
     ///   - session: The Cast session that resumed
     public func sessionManager(_ sessionManager: GCKSessionManager, didResumeCastSession session: GCKCastSession) {
+        CastLogger.shared.log("didResumeCastSession: \(session.device.friendlyName ?? session.device.deviceID)")
         onSessionChanged(session)
+        RemoteMediaClienteMethodChannel.instance.startListen()
+        RemoteMediaClienteMethodChannel.instance.resumeSession()
     }
     
     /// Called when a Cast session is about to resume
@@ -564,6 +613,7 @@ public class FGCSessionManagerMethodChannel : UIResponder, FlutterPlugin, GCKSes
         }
         _lastEmittedConnectionState = currentState
         
+        CastLogger.shared.log("onSessionChanged: state=\(String(describing: currentState?.rawValue)), device=\(session?.device.friendlyName ?? "none")")
         channel?.invokeMethod("onCurrentSessionChanged", arguments: session?.toDict())
     }
     

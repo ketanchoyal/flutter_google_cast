@@ -85,17 +85,42 @@ class GoogleCastSessionManagerIOSMethodChannel
 
   void _onCurrentSessionChanged(dynamic arguments) async {
     try {
-      final session = IOSGoogleCastSessions.fromMap(
-          arguments == null ? null : Map<String, dynamic>.from(arguments));
+      final session = arguments == null
+          ? null
+          : IOSGoogleCastSessions.fromMap(Map<String, dynamic>.from(arguments));
       _currentSessionStreamController.add(session);
-    } catch (e) {
-      rethrow;
+    } catch (_) {
+      _currentSessionStreamController.add(null);
+    }
+  }
+
+  @override
+  Future<GoogleCastSession?> getCurrentSession() async {
+    try {
+      final res = await _channel.invokeMethod('getCurrentSession');
+      if (res != null) {
+        final session = IOSGoogleCastSessions.fromMap(
+            Map<String, dynamic>.from(res));
+        _currentSessionStreamController.add(session);
+        return session;
+      } else {
+        _currentSessionStreamController.add(null);
+        return null;
+      }
+    } catch (_) {
+      _currentSessionStreamController.add(null);
+      return null;
     }
   }
 
   @override
   void setDeviceVolume(double value) {
     _channel.invokeMethod('setDeviceVolume', value);
+  }
+
+  @override
+  void setDeviceMuted(bool value) {
+    _channel.invokeMethod('setDeviceMuted', value);
   }
 
   @override

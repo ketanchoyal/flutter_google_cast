@@ -31,6 +31,12 @@ abstract class GoogleCastDiscoveryManagerPlatformInterface
   /// for reduce battery consumption.
   Future<void> stopDiscovery();
 
-  ///Tests whether discovery is currently active for the given device category.
+  /// Tests whether discovery is currently active for the given device category.
   Future<bool> isDiscoveryActiveForDeviceCategory(String deviceCategory);
+
+  /// Directly queries and returns the current list of discovered devices from the native SDK.
+  Future<List<GoogleCastDevice>> getDevices() async => devices;
+
+  /// Stream of native Cast SDK log messages for diagnostic and debugging purposes.
+  Stream<String> get logStream => const Stream.empty();
 }

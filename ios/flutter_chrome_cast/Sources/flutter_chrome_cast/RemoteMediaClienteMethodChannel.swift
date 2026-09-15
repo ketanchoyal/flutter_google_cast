@@ -56,7 +56,8 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
     /// Reference to the current Cast session's remote media client
     /// - Returns: The media client for the current session, or nil if no session
     private var currentRemoteMediaCliente: GCKRemoteMediaClient? {
-        GCKCastContext.sharedInstance().sessionManager.currentSession?.remoteMediaClient
+        let sm = GCKCastContext.sharedInstance().sessionManager
+        return sm.currentCastSession?.remoteMediaClient ?? sm.currentSession?.remoteMediaClient
     }
     
     /// Timer for tracking media position updates
@@ -235,15 +236,21 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
         result(request?.toMap())
     }
     
-    private  func loadMedia(_ arguments : Dictionary<String,Any>, result : FlutterResult )  {
+    private func loadMedia(_ arguments : Dictionary<String,Any>, result : FlutterResult ) {
         let sensitiveKeys: Set<String> = ["customData", "credentials"]
         let safeArgs = arguments.filter { !sensitiveKeys.contains($0.key) }
-        print("[GoogleCast] loadMedia() called with arguments: \(safeArgs)")
+        CastLogger.shared.log("loadMedia() called with arguments: \(safeArgs)")
         guard let mediaInfo = GCKMediaInformation.fromMap(arguments) else {
-            print("[GoogleCast] loadMedia() failed to create GCKMediaInformation")
+            CastLogger.shared.log("ERROR: loadMedia() failed to create GCKMediaInformation")
             result(FlutterError.init(code: "1", message:"fail to generate media info", details: nil))
             return
-            
+        }
+
+        guard let client = currentRemoteMediaCliente else {
+            let currentSession = GCKCastContext.sharedInstance().sessionManager.currentSession
+            CastLogger.shared.log("ERROR: loadMedia() called but currentRemoteMediaCliente is nil! (currentSession: \(String(describing: currentSession?.connectionState.rawValue)))")
+            result(FlutterError.init(code: "NO_CLIENT", message:"No active remote media client available", details: nil))
+            return
         }
 
         // Cache the contentID that Flutter passed so we can inject it into
@@ -255,14 +262,14 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
             self.lastLoadedContentID = nil
         }
         
-        print("[GoogleCast] loadMedia() mediaInfo created - contentID: \(mediaInfo.contentID ?? "nil"), contentType: \(mediaInfo.contentType ?? "nil"), streamType: \(mediaInfo.streamType.rawValue)")
+        CastLogger.shared.log("loadMedia() mediaInfo created - contentID: \(mediaInfo.contentID ?? "nil"), contentType: \(mediaInfo.contentType ?? "nil"), streamType: \(mediaInfo.streamType.rawValue)")
         
         let requestDataBuilder = GCKMediaLoadRequestDataBuilder()
         requestDataBuilder.mediaInformation = mediaInfo
         if let autoPlay = arguments["autoPlay"] as? Bool {
             requestDataBuilder.autoplay = NSNumber(value: autoPlay)
         }
-        if let playPosition = arguments["playPosition"] as? TimeInterval {
+        if let playPosition = (arguments["playPosition"] as? NSNumber)?.doubleValue ?? (arguments["playPosition"] as? TimeInterval) {
             requestDataBuilder.startTime = playPosition
         }
         if let playbackRate = arguments["playbackRate"] as? Float {
@@ -282,11 +289,10 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
         }
         let requestData = requestDataBuilder.build()
 
-        let request = currentRemoteMediaCliente?.loadMedia(with: requestData)
+        let request = client.loadMedia(with: requestData)
+        CastLogger.shared.log("loadMedia() request submitted to receiver: \(String(describing: request))")
 
-        result(request?.toMap())
-        
-        
+        result(request.toMap())
     }
     
     private func pause(_ result : FlutterResult){

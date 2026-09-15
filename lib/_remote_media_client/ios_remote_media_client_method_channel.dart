@@ -45,7 +45,7 @@ class GoogleCastRemoteMediaClientIOSMethodChannel
   Duration? _pendingLoadExpectedPosition;
   int? _pendingLoadPreviousMediaSessionId;
   Timer? _pendingLoadGuardTimer;
-  static const _pendingLoadGuardTimeout = Duration(seconds: 10);
+  static const _pendingLoadGuardTimeout = Duration(seconds: 3);
   static const _pendingLoadGuardTolerance = Duration(seconds: 5);
 
   final _queueItemsStreamController =
@@ -104,7 +104,7 @@ class GoogleCastRemoteMediaClientIOSMethodChannel
           ..addAll(
             {
               'autoPlay': autoPlay,
-              'playPosition': playPosition.inSeconds,
+              'playPosition': playPosition.inMilliseconds / 1000.0,
               'playbackRate': playbackRate,
               'activeTrackIds': activeTrackIds,
               'credentials': credentials,
@@ -185,10 +185,11 @@ class GoogleCastRemoteMediaClientIOSMethodChannel
           currentSessionId != _pendingLoadPreviousMediaSessionId;
       final converged =
           (duration - expected).abs() <= _pendingLoadGuardTolerance;
-      if (!sessionChanged || !converged) {
+      if (sessionChanged || converged) {
+        _releasePendingLoadGuard();
+      } else {
         return;
       }
-      _releasePendingLoadGuard();
     }
     _playerPositionStreamController.add(duration);
   }

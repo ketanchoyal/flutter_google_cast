@@ -131,20 +131,26 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
     /// - Note: This method should be called once during app initialization
     private func setSharedInstanceWithOption(arguments: Dictionary<String, Any> ,result: @escaping FlutterResult){
       
+        guard !GCKCastContext.isSharedInstanceInitialized() else {
+            CastLogger.shared.log("Cast context already initialized")
+            result(true)
+            return
+        }
+
             // Parse Cast options from Flutter arguments
         let option =  GCKCastOptions.fromMap(arguments)
         
         // Store the stopCastingOnAppTerminated option
         if let stopOnTerminated = arguments["stopCastingOnAppTerminated"] as? Bool {
             stopCastingOnAppTerminated = stopOnTerminated
-            if kDebugLoggingEnabled {
-                print("stopCastingOnAppTerminated set to: \(stopOnTerminated)")
-            }
+            CastLogger.shared.log("stopCastingOnAppTerminated set to: \(stopOnTerminated)")
         }
         
+        let appId = ((arguments["discoveryCriteria"] as? [String: Any])?["applicationID"] as? String) ?? "default"
+        CastLogger.shared.log("Initializing GCKCastContext with appId: \(appId)")
         // Initialize the shared Cast context with parsed options
-       GCKCastContext.setSharedInstanceWith(option)
-        
+        GCKCastContext.setSharedInstanceWith(option)
+         
         // Enable console logging for debugging
         GCKLogger.sharedInstance().consoleLoggingEnabled = true
         GCKLogger.sharedInstance().delegate = self
@@ -163,11 +169,10 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
         result(true)
 
         shouldResumeDiscoveryOnForeground = true
+        CastLogger.shared.log("Calling discoveryManager.startDiscovery() after init")
         discoveryManager.startDiscovery()
 
-        if kDebugLoggingEnabled {
-            print("Cast context initialized")
-        }
+        CastLogger.shared.log("Cast context initialized successfully")
 
         // Observe application lifecycle to stop discovery and remove listeners when app closes
         addLifecycleObserversIfNeeded()
@@ -178,9 +183,7 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
     /// Cleanly stops discovery and removes registered listeners to avoid callbacks after deallocation.
     private func tearDown() {
         // Stop discovery if it's running
-        if kDebugLoggingEnabled {
-            print("SwiftGoogleCastPlugin: tearing down - stopping discovery and removing listeners")
-        }
+        CastLogger.shared.log("SwiftGoogleCastPlugin: tearing down - stopping discovery and removing listeners")
         discoveryManager.stopDiscovery()
 
         // Remove any previously registered listeners (safe to call even if not registered)
@@ -195,9 +198,7 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
         // End the cast session and stop casting when app is terminated (if option is enabled)
         // This ensures the receiver stops casting when the app is killed
         if stopCastingOnAppTerminated && sessionManager.hasConnectedSession() {
-            if kDebugLoggingEnabled {
-                print("SwiftGoogleCastPlugin: App terminating - ending cast session and stopping casting (stopCastingOnAppTerminated=true)")
-            }
+            CastLogger.shared.log("SwiftGoogleCastPlugin: App terminating - ending cast session (stopCastingOnAppTerminated=true)")
             sessionManager.endSessionAndStopCasting(true)
         }
         tearDown()
@@ -208,12 +209,17 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
         // but keep discovery alive so we don't lose state
         shouldResumeDiscoveryOnForeground = discoveryManager.discoveryState == .running && !discoveryManager.passiveScan
         discoveryManager.passiveScan = true
+        CastLogger.shared.log("App entered background - discovery passiveScan=true (shouldResume=\(shouldResumeDiscoveryOnForeground))")
     }
 
     @objc private func applicationWillEnterForegroundNotification(_ notification: Notification) {
         // Restart active discovery when app returns to foreground
         discoveryManager.passiveScan = false
-        if shouldResumeDiscoveryOnForeground && discoveryManager.discoveryState == .stopped {
+        CastLogger.shared.log("App entered foreground - passiveScan=false (shouldResume=\(shouldResumeDiscoveryOnForeground))")
+        if shouldResumeDiscoveryOnForeground {
+            if discoveryManager.discoveryState == .running {
+                discoveryManager.stopDiscovery()
+            }
             discoveryManager.startDiscovery()
         }
     }
@@ -279,10 +285,37 @@ public class SwiftGoogleCastPlugin: NSObject, GCKLoggerDelegate, FlutterPlugin, 
                       at level: GCKLoggerLevel,
                       fromFunction function: String,
                       location: String) {
-          // Print formatted log message with function name for easier debugging
-          if kDebugLoggingEnabled {
-              print(function + " - " + message)
-          }
+        let levelStr: String
+        switch level {
+        case .verbose: levelStr = "VERBOSE"
+        case .debug: levelStr = "DEBUG"
+        case .info: levelStr = "INFO"
+        case .warning: levelStr = "WARNING"
+        case .error: levelStr = "ERROR"
+        case .none: levelStr = "NONE"
+        @unknown default: levelStr = "UNKNOWN"
+        }
+
+        if kDebugLoggingEnabled {
+            print("\(levelStr) [\(function)] - \(message)")
+        }
+
+        // Filter out noisy raw parser/socket byte traces unless relevant to discovery/connection/errors
+        let isImportant = level != .verbose ||
+            message.localizedCaseInsensitiveContains("device") ||
+            message.localizedCaseInsensitiveContains("discover") ||
+            message.localizedCaseInsensitiveContains("mdns") ||
+            message.localizedCaseInsensitiveContains("cast") ||
+            message.localizedCaseInsensitiveContains("online") ||
+            message.localizedCaseInsensitiveContains("offline") ||
+            message.localizedCaseInsensitiveContains("probe") ||
+            message.localizedCaseInsensitiveContains("connect") ||
+            message.localizedCaseInsensitiveContains("fail") ||
+            message.localizedCaseInsensitiveContains("error")
+
+        if isImportant {
+            CastLogger.shared.log("[\(levelStr)] [\(function)] \(message)")
+        }
     }
     
   

@@ -102,23 +102,49 @@ class FGCDiscoveryManagerMethodChannel : UIResponder, GCKDiscoveryManagerListene
     /// - `stopDiscovery`: Stops active device scanning
     /// - `isDiscoveryActiveForDeviceCategory`: Checks if discovery is active for a device category
     ///
-    /// - Parameters:
-    ///   - call: The Flutter method call
-    ///   - result: Callback to return results to Flutter
+    private var pollTimer: Timer?
+
+    private func startPolling() {
+        stopPolling()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if GCKCastContext.isSharedInstanceInitialized() {
+                let dm = GCKCastContext.sharedInstance().discoveryManager
+                if dm.deviceCount != self.devices.count {
+                    CastLogger.shared.log("Poll timer mismatch: dm.deviceCount=\(dm.deviceCount), cached=\(self.devices.count). Updating...")
+                    self.didUpdateDeviceList()
+                }
+            }
+        }
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    /// Handles method calls from the Flutter side
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         withDiscoveryManager(result: result) { discoveryManager in
             switch call.method {
             case "startDiscovery":
                 SwiftGoogleCastPlugin.instance?.shouldResumeDiscoveryOnForeground = true
                 discoveryManager.passiveScan = false
-                if discoveryManager.discoveryState == .stopped {
+                CastLogger.shared.log("startDiscovery requested. Current state=\(discoveryManager.discoveryState.rawValue), passive=\(discoveryManager.passiveScan)")
+                if discoveryManager.discoveryState != .running {
+                    CastLogger.shared.log("startDiscovery: not running -> starting discovery")
                     discoveryManager.startDiscovery()
+                } else {
+                    CastLogger.shared.log("startDiscovery: already running -> maintaining active scan without reset")
                 }
                 // Re-send current device list so Flutter gets immediate state
                 didUpdateDeviceList()
+                startPolling()
                 result(true)
             case "stopDiscovery":
                 SwiftGoogleCastPlugin.instance?.shouldResumeDiscoveryOnForeground = false
+                stopPolling()
+                CastLogger.shared.log("stopDiscovery requested")
                 if discoveryManager.discoveryState == .running {
                     discoveryManager.stopDiscovery()
                 }
@@ -126,6 +152,39 @@ class FGCDiscoveryManagerMethodChannel : UIResponder, GCKDiscoveryManagerListene
                 devices.removeAll()
                 didUpdateDeviceList()
                 result(true)
+            case "getDevices":
+                let count = discoveryManager.deviceCount
+                devices.removeAll()
+                for i in 0..<count {
+                    let dev = discoveryManager.device(at: i)
+                    devices[UInt(i)] = dev
+                }
+                let deviceList = devices.sorted {
+                    a, b in a.key < b.key
+                }.map { device -> [String : Any] in
+                    var dict = device.value.toDict()
+                    dict["index"] = device.key
+                    return dict
+                }
+                CastLogger.shared.log("getDevices called from Flutter, returning \(deviceList.count) device(s)")
+                result(deviceList)
+            case "getDiscoveryStatus":
+                let count = discoveryManager.deviceCount
+                var deviceNames: [String] = []
+                for i in 0..<count {
+                    let d = discoveryManager.device(at: i)
+                    deviceNames.append(d.friendlyName ?? d.deviceID)
+                }
+                result([
+                    "initialized": true,
+                    "state": discoveryManager.discoveryState == .running ? "running" : "stopped",
+                    "passive": discoveryManager.passiveScan,
+                    "count": count,
+                    "devices": deviceNames,
+                    "recentLogs": CastLogger.shared.getRecentLogs(),
+                ])
+            case "getRecentLogs":
+                result(CastLogger.shared.getRecentLogs())
             case "isDiscoveryActiveForDeviceCategory":
                 if let args = call.arguments as? Dictionary<String, Any>,
                    let deviceCategory = args["deviceCategory"] as? String {
@@ -142,66 +201,77 @@ class FGCDiscoveryManagerMethodChannel : UIResponder, GCKDiscoveryManagerListene
     
     // MARK: - Google Cast Discovery Manager Listener
     
+    /// Called when discovery starts for a device category
+    public func didStartDiscovery(forDeviceCategory deviceCategory: String) {
+        CastLogger.shared.log("didStartDiscovery for category: \(deviceCategory)")
+    }
+
+    /// Called when there are discovered devices available at the start of discovery
+    public func didHaveDiscoveredDeviceWhenStartingDiscovery() {
+        CastLogger.shared.log("didHaveDiscoveredDeviceWhenStartingDiscovery")
+        didUpdateDeviceList()
+    }
+
     /// Called when a Cast device is updated in the discovery list
-    /// 
-    /// This method is invoked by the Cast SDK when an existing device's
-    /// information is updated (e.g., name change, capability updates).
-    ///
-    /// - Parameters:
-    ///   - device: The updated Cast device
-    ///   - index: The index position of the device in the discovery list
     public func didUpdate(_ device: GCKDevice, at index: UInt) {
-        devices[index] = device
-        print("didUpdateDevice at index: \(index)")
+        CastLogger.shared.log("didUpdate device: \(device.friendlyName ?? device.deviceID) at index: \(index)")
+        didUpdateDeviceList()
+    }
+
+    /// Called when a Cast device is updated and moved to a new index
+    public func didUpdate(_ device: GCKDevice, at index: UInt, andMoveTo newIndex: UInt) {
+        CastLogger.shared.log("didUpdate andMoveTo device: \(device.friendlyName ?? device.deviceID) to index: \(newIndex)")
+        didUpdateDeviceList()
     }
     
     /// Called when a new Cast device is discovered
-    /// 
-    /// This method is invoked when a new Cast device becomes available
-    /// on the network. The device is added to the internal devices dictionary.
-    ///
-    /// - Parameters:
-    ///   - device: The newly discovered Cast device
-    ///   - index: The index position assigned to the device
     public func didInsert(_ device: GCKDevice, at index: UInt) {
-        devices[index] = device
-        print("didInsertDevice at index: \(index)")
+        CastLogger.shared.log("didInsert device: \(device.friendlyName ?? device.deviceID) (\(device.modelName ?? "Cast")) [ip: \(device.networkAddress.ipAddress)] at index: \(index)")
+        didUpdateDeviceList()
     }
     
     /// Called when a Cast device is removed from discovery
-    /// 
-    /// This method is invoked when a Cast device is no longer available
-    /// (e.g., device goes offline, network changes). The device is removed
-    /// from the internal devices dictionary.
-    ///
-    /// - Parameters:
-    ///   - device: The Cast device that was removed
-    ///   - index: The index position of the removed device
     public func didRemove(_ device: GCKDevice, at index: UInt) {
-        devices.removeValue(forKey: index)
-        print("didRemoveDevice at index: \(index)")
+        CastLogger.shared.log("didRemove device at index: \(index)")
+        didUpdateDeviceList()
+    }
+
+    /// Called when a Cast device index is removed from discovery
+    public func didRemoveDevice(at index: UInt) {
+        CastLogger.shared.log("didRemoveDevice at index: \(index)")
+        didUpdateDeviceList()
     }
     
     /// Called when the device list changes
-    /// 
-    /// This method is invoked whenever there are changes to the discovery
-    /// device list. It sends the updated device list to Flutter via the
-    /// method channel, allowing the Flutter side to update its UI accordingly.
-    ///
-    /// The device list is sorted by index and converted to a format suitable
-    /// for Flutter consumption, with each device represented as a dictionary
-    /// containing device information and its discovery index.
     public func didUpdateDeviceList() {
+        if GCKCastContext.isSharedInstanceInitialized() {
+            let dm = GCKCastContext.sharedInstance().discoveryManager
+            let count = dm.deviceCount
+            devices.removeAll()
+            for i in 0..<count {
+                let dev = dm.device(at: i)
+                devices[UInt(i)] = dev
+            }
+            CastLogger.shared.log("didUpdateDeviceList: dm has \(count) devices")
+        }
         
-        channel!.invokeMethod("onDevicesChanged" , arguments: devices.sorted{
-            a,b in
-            return a.key > b.key
-        }.map{
-            device in
-            var dict =  device.value.toDict()
+        let deviceList = devices.sorted {
+            a, b in a.key < b.key
+        }.map { device -> [String : Any] in
+            var dict = device.value.toDict()
             dict["index"] = device.key
             return dict
-        })
+        }
+        
+        CastLogger.shared.log("notifying Flutter channel on main thread with \(deviceList.count) device(s)")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard let ch = self.channel else {
+                CastLogger.shared.log("ERROR: channel is nil when notifying onDevicesChanged")
+                return
+            }
+            ch.invokeMethod("onDevicesChanged", arguments: deviceList)
+        }
     }
     
 }

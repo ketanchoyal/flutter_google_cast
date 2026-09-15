@@ -33,6 +33,12 @@ class GoogleCastDiscoveryManagerMethodChannelAndroid
       _devicesStreamController.stream;
 
   @override
+  Stream<String> get logStream => const Stream.empty();
+
+  @override
+  Future<List<GoogleCastDevice>> getDevices() async => devices;
+
+  @override
   Future<bool> isDiscoveryActiveForDeviceCategory(String deviceCategory) {
     throw UnimplementedError('IOS Only');
   }

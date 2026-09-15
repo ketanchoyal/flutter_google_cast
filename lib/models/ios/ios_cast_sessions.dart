@@ -22,18 +22,37 @@ class IOSGoogleCastSessions extends GoogleCastSession {
 
   /// Creates an [IOSGoogleCastSessions] instance from a [Map] (e.g., JSON).
   ///
-  /// Returns `null` if the input [json] is `null`.
-  /// Throws if required fields are missing or of incorrect type.
+  /// Returns `null` if the input [json] is `null` or invalid.
   static IOSGoogleCastSessions? fromMap(Map<String, dynamic>? json) {
     if (json == null) return null;
-    return IOSGoogleCastSessions(
-      device: GoogleCastIosDevice.fromMap(
-          Map<String, dynamic>.from(json['device'])),
-      sessionID: json['sessionID'],
-      connectionState: GoogleCastConnectState.values[json['connectionState']],
-      currentDeviceMuted: json['currentDeviceMuted'],
-      currentDeviceVolume: json['currentDeviceVolume'],
-      deviceStatusText: json['deviceStatusText'] ?? '',
-    );
+    try {
+      final rawState = json['connectionState'];
+      GoogleCastConnectState connState = GoogleCastConnectState.disconnected;
+      if (rawState is int && rawState >= 0 && rawState < GoogleCastConnectState.values.length) {
+        connState = GoogleCastConnectState.values[rawState];
+      }
+
+      final volume = (json['currentDeviceVolume'] as num?)?.toDouble() ?? 1.0;
+      final muted = (json['currentDeviceMuted'] as bool?) ?? false;
+      final statusText = (json['deviceStatusText'] as String?) ?? '';
+      final sessionID = json['sessionID'] as String?;
+
+      GoogleCastIosDevice? device;
+      final deviceMap = json['device'];
+      if (deviceMap is Map) {
+        device = GoogleCastIosDevice.fromMap(Map<String, dynamic>.from(deviceMap));
+      }
+
+      return IOSGoogleCastSessions(
+        device: device,
+        sessionID: sessionID,
+        connectionState: connState,
+        currentDeviceMuted: muted,
+        currentDeviceVolume: volume,
+        deviceStatusText: statusText,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 }

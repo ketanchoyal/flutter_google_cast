@@ -12,40 +12,14 @@ import GoogleCast
      
      
      func toDict() -> Dictionary<String, Any> {
-         
          var dict = [String : Any]()
-         
-          dict["device"] = self.device.toDict()
-         dict["sessionID"] = self.sessionID
+         dict["device"] = self.device.toDict()
+         dict["sessionID"] = self.sessionID ?? ""
          dict["connectionState"] = self.connectionState.rawValue
          dict["currentDeviceMuted"] = self.currentDeviceMuted
-         dict["currentDeviceVolume"] = self.currentDeviceVolume
-         dict["deviceStatusText"] = self.deviceStatusText
-        
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
-         
+         dict["currentDeviceVolume"] = Double(self.currentDeviceVolume)
+         dict["deviceStatusText"] = self.deviceStatusText ?? ""
          return dict
-         
-         
      }
     
 }

@@ -74,10 +74,24 @@ extension  GCKCastOptions{
             // Default case - should not occur with proper Flutter implementation
             break
         }
+
+        // CRITICAL FOR iOS CAST DISCOVERY:
+        // By default, GCKDiscoveryCriteria filters discovered devices to only those
+        // currently running or broadcasting the specific applicationID ("CC1AD845").
+        // Idle Cast devices, Google Nest/Home speakers, and Cast TVs do NOT broadcast
+        // the applicationID while idle or on the backdrop screen.
+        // Setting `anyDevice = true` tells GCKCastDevicePublisher to accept and publish
+        // ALL Google Cast devices found on the local network (matching YouTube/Spotify behavior).
+        let anyDevice = (discoveryCriteriaData["anyDevice"] as? Bool) ?? true
+        discoveryCriteria?.setValue(anyDevice, forKey: "anyDevice")
         
         // Create Cast options with discovery criteria
         let option =  GCKCastOptions.init(discoveryCriteria: discoveryCriteria!)
         
+        // Ensure discovery does not wait for a non-existent native GCKUICastButton tap
+        option.startDiscoveryAfterFirstTapOnCastButton = false
+        option.disableDiscoveryAutostart = false
+
         // Configure additional options if provided
         if let physicalVolumeButtonsWillControlDeviceVolume = map["physicalVolumeButtonsWillControlDeviceVolume"] as? Bool {
             // Set whether hardware volume buttons control Cast device volume

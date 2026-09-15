@@ -25,16 +25,25 @@ class GoogleCastIosDevice extends GoogleCastDevice {
 
   /// Creates a [GoogleCastIosDevice] from a map, typically from platform channel data.
   factory GoogleCastIosDevice.fromMap(Map<String, dynamic> map) {
+    final devId = (map['deviceID'] as String?) ?? '';
+    final friendly = (map['friendlyName'] as String?)?.trim();
+    final model = map['modelName'] as String?;
+    final resolvedFriendlyName = (friendly != null && friendly.isNotEmpty)
+        ? friendly
+        : (model != null && model.isNotEmpty)
+            ? model
+            : 'Cast Device';
+
     return GoogleCastIosDevice(
-      deviceID: map['deviceID'] as String,
-      friendlyName: map['friendlyName'] ?? '',
-      modelName: map['modelName'],
-      statusText: map['statusText'],
-      deviceVersion: map['deviceVersion'] ?? '',
-      isOnLocalNetwork: map['isOnLocalNetwork'] as bool,
-      category: map['category'] as String,
-      uniqueID: map['uniqueID'] as String,
-      index: map['index'],
+      deviceID: devId,
+      friendlyName: resolvedFriendlyName,
+      modelName: model,
+      statusText: map['statusText'] as String?,
+      deviceVersion: (map['deviceVersion'] as String?) ?? '',
+      isOnLocalNetwork: (map['isOnLocalNetwork'] as bool?) ?? true,
+      category: (map['category'] as String?) ?? '',
+      uniqueID: (map['uniqueID'] as String?) ?? devId,
+      index: map['index'] as int?,
     );
   }
 }

@@ -114,6 +114,9 @@ abstract class GoogleCastSessionManagerPlatformInterface
   /// Sets the device volume.
   void setDeviceVolume(double value);
 
+  /// Sets whether the device is muted.
+  void setDeviceMuted(bool value);
+
   /// Forcefully resets a stuck session.
   ///
   /// On iOS this performs a full teardown: it removes the session manager
@@ -123,7 +126,11 @@ abstract class GoogleCastSessionManagerPlatformInterface
   /// [currentSessionStream], [currentSession] and [connectionState] are
   /// cleared.
   ///
-  /// On Android this delegates to [endSessionAndStopCasting] because
-  /// stale-session issues are not observed on that platform.
+  /// Forcefully resets a stuck session.
   Future<bool> resetSession();
+
+  /// Actively queries the current session from the native platform.
+  Future<GoogleCastSession?> getCurrentSession() async {
+    return currentSession;
+  }
 }
