@@ -157,6 +157,14 @@ class SessionManagerMethodChannel(discoveryManager: DiscoveryManagerMethodChanne
                 sessionManager?.currentCastSession?.volume = call.arguments as Double
                 result.success(true)
             }
+            "setStreamMuted" -> {
+                sessionManager?.currentCastSession?.isMute = call.arguments as Boolean
+                result.success(true)
+            }
+            "getCurrentSession" -> {
+                result.success(sessionManager?.currentCastSession?.toMap())
+            }
+            else -> result.notImplemented()
         }
     }
 
