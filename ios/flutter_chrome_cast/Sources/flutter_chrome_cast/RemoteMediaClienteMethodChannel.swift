@@ -57,7 +57,11 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
     /// - Returns: The media client for the current session, or nil if no session
     private var currentRemoteMediaCliente: GCKRemoteMediaClient? {
         let sm = GCKCastContext.sharedInstance().sessionManager
-        return sm.currentCastSession?.remoteMediaClient ?? sm.currentSession?.remoteMediaClient
+        let client = sm.currentCastSession?.remoteMediaClient ?? sm.currentSession?.remoteMediaClient
+        if let client = client {
+            client.add(self)
+        }
+        return client
     }
     
     /// Timer for tracking media position updates
@@ -289,6 +293,8 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
         }
         let requestData = requestDataBuilder.build()
 
+        client.add(self)
+        startListenPlayerPosition()
         let request = client.loadMedia(with: requestData)
         CastLogger.shared.log("loadMedia() request submitted to receiver: \(String(describing: request))")
 
@@ -299,26 +305,24 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
         print("[GoogleCast] pause() called, remoteMediaClient: \(String(describing: currentRemoteMediaCliente))")
         let request =  currentRemoteMediaCliente?.pause()
         print("[GoogleCast] pause() request: \(String(describing: request))")
+        let position = self.currentRemoteMediaCliente?.approximateStreamPosition() ?? 0
+        self.channel?.invokeMethod("onUpdatePlayerPosition", arguments: Int(position))
         result(  request?.toMap() )
-        
-        
     }
     
     private func stop(_ result : FlutterResult){
         print("[GoogleCast] stop() called, remoteMediaClient: \(String(describing: currentRemoteMediaCliente))")
         let request =  currentRemoteMediaCliente?.stop()
         result(  request?.toMap() )
-        
-        
     }
     
     private func play(_ result : FlutterResult){
         print("[GoogleCast] play() called, remoteMediaClient: \(String(describing: currentRemoteMediaCliente))")
+        currentRemoteMediaCliente?.add(self)
+        startListenPlayerPosition()
         let request =  currentRemoteMediaCliente?.play()
         print("[GoogleCast] play() request: \(String(describing: request))")
         result(  request?.toMap() )
-        
-        
     }
     
     private func setActiveTrackIDs(_ result : FlutterResult, _ args : [NSNumber] ){
@@ -489,11 +493,13 @@ class RemoteMediaClienteMethodChannel :UIResponder, FlutterPlugin, GCKRemoteMedi
         self.positionTimer?.invalidate()
         self.positionTimer = nil
         
-        self.positionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true){ [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true){ [weak self] _ in
             guard let self = self else { return }
             let position = self.currentRemoteMediaCliente?.approximateStreamPosition() ?? 0
             self.channel?.invokeMethod("onUpdatePlayerPosition", arguments: Int(position))
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.positionTimer = timer
     }
 
 }

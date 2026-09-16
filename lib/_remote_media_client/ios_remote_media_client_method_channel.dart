@@ -185,7 +185,7 @@ class GoogleCastRemoteMediaClientIOSMethodChannel
           currentSessionId != _pendingLoadPreviousMediaSessionId;
       final converged =
           (duration - expected).abs() <= _pendingLoadGuardTolerance;
-      if (sessionChanged || converged) {
+      if (converged) {
         _releasePendingLoadGuard();
       } else {
         return;
