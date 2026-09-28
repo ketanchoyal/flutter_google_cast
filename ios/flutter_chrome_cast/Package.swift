@@ -20,18 +20,12 @@ let package = Package(
             targets: ["flutter_chrome_cast"]
         )
     ],
-    dependencies: [
-        // Google Cast SDK wrapper maintained by SRGSSR (Swiss Radio and Television)
-        // This is a community-maintained wrapper that provides SPM support for the official Google Cast SDK.
-        // Check https://github.com/SRGSSR/google-cast-sdk for the latest version tag and release notes.
-        // 4.8.4+ XCFramework includes arm64 + x86_64 simulator slices (Apple Silicon / iOS 26+).
-        .package(url: "https://github.com/SRGSSR/google-cast-sdk.git", from: "4.8.4")
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "flutter_chrome_cast",
             dependencies: [
-                .product(name: "GoogleCast", package: "google-cast-sdk")
+                .target(name: "GoogleCast")
             ],
             exclude: [
                 // Exclude Objective-C files - they are used by CocoaPods only
@@ -45,6 +39,11 @@ let package = Package(
                 // to describe your plugin's privacy impact, and then uncomment this line.
                 // .process("PrivacyInfo.xcprivacy"),
             ]
+        ),
+        .binaryTarget(
+            name: "GoogleCast",
+            url: "https://github.com/SRGSSR/google-cast-sdk/releases/download/4.8.6/GoogleCast.xcframework.zip",
+            checksum: "55f6c21291a1315c68063f07e7d76225564bff70f2fd38caad135c71d66eb310"
         )
     ]
 )
